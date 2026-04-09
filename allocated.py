@@ -2,6 +2,7 @@
 import json
 import sys
 import argparse
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from collections import defaultdict
@@ -38,8 +39,8 @@ def get_config_val(lines, key):
             return line.split(":", 1)[1].strip()
     return None
 
-def calculate_monthly_capacity(start_dt, end_dt, exclusions, holidays, hpd):
-    """Calculates total possible work hours for the date range."""
+def calculate_monthly_capacity(start_dt, end_dt, exclusions, holidays):
+    """Calculates total possible work hours based strictly on Timewarrior exclusions."""
     total_hours = 0.0
     curr = start_dt.date()
     while curr < end_dt.date():
@@ -47,12 +48,10 @@ def calculate_monthly_capacity(start_dt, end_dt, exclusions, holidays, hpd):
         date_str = curr.strftime('%Y-%m-%d')
         
         if date_str in holidays:
-            # 9-80 logic: If holiday is Friday, 0. If M-Th, subtract 8 (leaving 1 for 9hr day)
-            day_goal = 0.0 if day_name == 'friday' else max(0.0, hpd - 8.0)
-        elif day_name in ['saturday', 'sunday']:
             day_goal = 0.0
         else:
-            day_goal = exclusions.get(day_name, hpd)
+            # Default to 0 if the day isn't defined in the exclusions
+            day_goal = exclusions.get(day_name, 0.0) 
             
         total_hours += day_goal
         curr += timedelta(days=1)
@@ -134,17 +133,30 @@ def main():
         alloc_data = tomllib.load(f)
     
     # 5. Handle Capacity Calculation
-    hpd_str = get_config_val(config_lines, "totals.hours_per_day")
-    hpd = float(hpd_str) if hpd_str else 8.0
     holidays = {line.split('.')[2].split(':')[0] for line in config_lines if "holidays." in line}
     
     exclusions = {}
-    for day in ['monday','tuesday','wednesday','thursday','friday']:
-        for line in config_lines:
-            if f"exclusions.{day}" in line and ">" in line:
-                exclusions[day] = 9.0 if day != 'friday' else 8.0
+    # Matches standard window: exclusions.monday: <19:00 >21:00
+    pattern_window = re.compile(r'exclusions\.(\w+):\s*<\s*(\d+:\d+)\s*>\s*(\d+:\d+)')
+    # Matches full day exclusion: exclusions.sunday: >0:00
+    pattern_zero = re.compile(r'exclusions\.(\w+):\s*>\s*0:00')
+    
+    for line in config_lines:
+        match_window = pattern_window.match(line)
+        if match_window:
+            day = match_window.group(1).lower()
+            start_parts = match_window.group(2).split(':')
+            end_parts = match_window.group(3).split(':')
+            start_m = int(start_parts[0]) * 60 + int(start_parts[1])
+            end_m = int(end_parts[0]) * 60 + int(end_parts[1])
+            exclusions[day] = (end_m - start_m) / 60.0
+        else:
+            match_zero = pattern_zero.match(line)
+            if match_zero:
+                day = match_zero.group(1).lower()
+                exclusions[day] = 0.0
 
-    monthly_capacity = calculate_monthly_capacity(report_start, report_end, exclusions, holidays, hpd)
+    monthly_capacity = calculate_monthly_capacity(report_start, report_end, exclusions, holidays)
 
     # 6. Process Intervals
     try:
@@ -185,12 +197,14 @@ def main():
     print(f"\n{COLOR_HEADER}Allocation Report: {report_start.strftime('%B %Y')}{COLOR_RESET}")
     print(f"Monthly Capacity: {format_hours(monthly_capacity)} hrs\n")
     
-# --- DAILY BREAKDOWN ---
+    # --- DAILY BREAKDOWN ---
     if daily_data:
-        # Added '% of Day' to the header
         daily_header = f"{'Date':<16} {'Project':<20} {'Worked':<10} {'% of Day':<10} {'Day Total':<10}"
         print(daily_header)
         print("-" * len(daily_header))
+
+        alt_day = False 
+        COLOR_DAY_ALT = "\033[36m" # Cyan color for alternating days
 
         for d_obj in sorted(daily_data.keys()):
             date_str = d_obj.strftime('%b %a %d')
@@ -199,16 +213,21 @@ def main():
             projects_worked = [(p, h) for p, h in daily_data[d_obj].items() if h > 0]
             projects_worked.sort(key=lambda x: (x[0] == 'Unallocated', x[0]))
 
+            # Determine the color for the entire day's block
+            row_color = COLOR_DAY_ALT if alt_day else ""
+
             for i, (proj, hrs) in enumerate(projects_worked):
                 d_label = date_str if i == 0 else ""
                 t_label = format_hours(day_total) if i == len(projects_worked) - 1 else ""
                 
-                # Calculate percentage of the day's total worked hours
                 pct = (hrs / day_total * 100) if day_total > 0 else 0.0
                 pct_str = f"{pct:.1f}%"
                 
-                # Added pct_str to the print formatting
-                print(f"{d_label:<16} {proj:<20} {format_hours(hrs):<10} {pct_str:<10} {t_label:<10}")
+                # Apply the row color and reset it at the end of the line
+                print(f"{row_color}{d_label:<16} {proj:<20} {format_hours(hrs):<10} {pct_str:<10} {t_label:<10}{COLOR_RESET}")
+            
+            # Flip the toggle for the next day
+            alt_day = not alt_day
             
         print()
 
