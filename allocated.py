@@ -185,9 +185,10 @@ def main():
     print(f"\n{COLOR_HEADER}Allocation Report: {report_start.strftime('%B %Y')}{COLOR_RESET}")
     print(f"Monthly Capacity: {format_hours(monthly_capacity)} hrs\n")
     
-    # --- DAILY BREAKDOWN ---
+# --- DAILY BREAKDOWN ---
     if daily_data:
-        daily_header = f"{'Date':<16} {'Project':<20} {'Worked':<10} {'Day Total':<10}"
+        # Added '% of Day' to the header
+        daily_header = f"{'Date':<16} {'Project':<20} {'Worked':<10} {'% of Day':<10} {'Day Total':<10}"
         print(daily_header)
         print("-" * len(daily_header))
 
@@ -201,9 +202,15 @@ def main():
             for i, (proj, hrs) in enumerate(projects_worked):
                 d_label = date_str if i == 0 else ""
                 t_label = format_hours(day_total) if i == len(projects_worked) - 1 else ""
-                print(f"{d_label:<16} {proj:<20} {format_hours(hrs):<10} {t_label:<10}")
+                
+                # Calculate percentage of the day's total worked hours
+                pct = (hrs / day_total * 100) if day_total > 0 else 0.0
+                pct_str = f"{pct:.1f}%"
+                
+                # Added pct_str to the print formatting
+                print(f"{d_label:<16} {proj:<20} {format_hours(hrs):<10} {pct_str:<10} {t_label:<10}")
             
-        print() 
+        print()
 
     # --- MONTHLY SUMMARY ---
     summary_header = f"{'Project Summary':<20} {'Goal':<10} {'Actual':<10} {'Remaining':<10} {'Status'}"
