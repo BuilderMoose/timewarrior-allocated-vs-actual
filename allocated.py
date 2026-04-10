@@ -3,7 +3,7 @@ import json
 import sys
 import argparse
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from collections import defaultdict
 
@@ -104,6 +104,9 @@ def main():
         print("Error: 'allocated.folder' not defined in timewarrior.cfg")
         sys.exit(1)
 
+    ignored_tags_raw = get_config_val(config_lines, "projected.ignore_tags")
+    ignored_tags = set(ignored_tags_raw.split()) if ignored_tags_raw else set()
+
     report_start_str = get_config_val(config_lines, "temp.report.start")
     report_end_str = get_config_val(config_lines, "temp.report.end")
     
@@ -169,10 +172,11 @@ def main():
     unallocated_time = 0.0
 
     daily_data = defaultdict(lambda: defaultdict(float))
+    excluded_summary = defaultdict(float)
 
     for entry in intervals:
         start = datetime.strptime(entry['start'], '%Y%m%dT%H%M%SZ')
-        end = datetime.strptime(entry['end'], '%Y%m%dT%H%M%SZ') if 'end' in entry else datetime.utcnow()
+        end = datetime.strptime(entry['end'], '%Y%m%dT%H%M%SZ') if 'end' in entry else datetime.now(timezone.utc).replace(tzinfo=None)
         duration = (end - start).total_seconds() / 3600.0
         
         # Group by local date
@@ -181,6 +185,12 @@ def main():
 
         entry_tags = set(entry.get('tags', []))
         
+        intersecting = entry_tags & ignored_tags
+        if intersecting:
+            for tag in intersecting:
+                excluded_summary[tag] += duration
+            continue
+
         matched = False
         for p_name, p_info in project_stats.items():
             if entry_tags & p_info['tags']:
@@ -194,6 +204,10 @@ def main():
             daily_data[local_date]['Unallocated'] += duration
 
     # 7. Final Calculations & Output
+    if ignored_tags:
+        colored_tags = [f"{COLOR_HEADER}{tag}{COLOR_RESET}" for tag in sorted(ignored_tags)]
+        print(f"Excluded tags: {', '.join(colored_tags)}")
+
     print(f"\n{COLOR_HEADER}Allocation Report: {report_start.strftime('%B %Y')}{COLOR_RESET}")
     print(f"Monthly Capacity: {format_hours(monthly_capacity)} hrs\n")
     
@@ -256,6 +270,14 @@ def main():
     print("-" * len(summary_header))
     print(f"{'Unallocated':<20} {'-':<10} {format_hours(unallocated_time):<10}")
     print(f"{'TOTAL LOGGED':<20} {'-':<10} {format_hours(total_actual + unallocated_time):<10}")
+
+    if excluded_summary:
+        print("\nExcluded Time Summary:")
+        print("-" * 30)
+        for tag in sorted(excluded_summary.keys()):
+            # Using COLOR_HEADER to mimic the colored output from your other script
+            col_tag = f"{COLOR_HEADER}{tag}{COLOR_RESET}"
+            print(f"{col_tag:<27} {format_hours(excluded_summary[tag])}")
 
 if __name__ == "__main__":
     main()
