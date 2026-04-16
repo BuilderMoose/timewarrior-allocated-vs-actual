@@ -246,7 +246,11 @@ def main():
         print()
 
     # --- MONTHLY SUMMARY ---
-    summary_header = f"{'Project Summary':<20} {'Goal':<10} {'Actual':<10} {'Remaining':<10} {'Status'}"
+    # Pre-calculate total logged time so we can figure out the percentages
+    total_logged = sum(p['actual'] for p in project_stats.values()) + unallocated_time
+
+    # Added '% Capacity' and renamed '% of Mth' to '% Logged' for clarity
+    summary_header = f"{'Project Summary':<20} {'Goal':<10} {'Actual':<10} {'% Logged':<10} {'% Capacity':<12} {'Remaining':<10} {'Status'}"
     print(summary_header)
     print("-" * len(summary_header))
 
@@ -256,20 +260,36 @@ def main():
         actual = data['actual']
         remaining = goal - actual
         total_actual += actual
-        
+
         color = COLOR_SUCCESS if remaining >= 0 else COLOR_DANGER
         progress = min(10, int((actual / goal) * 10)) if goal > 0 else 0
         bar = f"[{'#' * progress}{'.' * (10 - progress)}]"
-        
+
+        # Calculate percentage of total time logged so far
+        pct_logged = (actual / total_logged * 100) if total_logged > 0 else 0.0
+        pct_logged_str = f"{pct_logged:.1f}%"
+
+        # Calculate percentage of the total monthly schedule capacity
+        pct_cap = (actual / monthly_capacity * 100) if monthly_capacity > 0 else 0.0
+        pct_cap_str = f"{pct_cap:.1f}%"
+
         print(f"{name:<20} "
               f"{format_hours(goal):<10} "
               f"{format_hours(actual):<10} "
+              f"{pct_logged_str:<10} "
+              f"{pct_cap_str:<12} "
               f"{color}{format_hours(remaining):<10}{COLOR_RESET} "
               f"{bar}")
 
     print("-" * len(summary_header))
-    print(f"{'Unallocated':<20} {'-':<10} {format_hours(unallocated_time):<10}")
-    print(f"{'TOTAL LOGGED':<20} {'-':<10} {format_hours(total_actual + unallocated_time):<10}")
+
+    # Align the footer rows with both new columns
+    unalloc_pct_logged = (unallocated_time / total_logged * 100) if total_logged > 0 else 0.0
+    unalloc_pct_cap = (unallocated_time / monthly_capacity * 100) if monthly_capacity > 0 else 0.0
+    print(f"{'Unallocated':<20} {'-':<10} {format_hours(unallocated_time):<10} {f'{unalloc_pct_logged:.1f}%':<10} {f'{unalloc_pct_cap:.1f}%':<12}")
+
+    total_cap_pct = (total_logged / monthly_capacity * 100) if monthly_capacity > 0 else 0.0
+    print(f"{'TOTAL LOGGED':<20} {'-':<10} {format_hours(total_logged):<10} {'100.0%':<10} {f'{total_cap_pct:.1f}%':<12}")
 
     if excluded_summary:
         print("\nExcluded Time Summary:")
